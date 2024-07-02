@@ -17,7 +17,10 @@ public partial class ProductInventoryContext : DbContext
     {
     }
     public DbSet<ProductDto> ProductDtos { get; set; }
+
     public DbSet<ProductId> ProductIds { get; set; }
+
+    public DbSet<CategoryDto> categoryDtos { get; set; }
     public virtual DbSet<Brand> Brands { get; set; }
 
     public virtual DbSet<Category> Categories { get; set; }

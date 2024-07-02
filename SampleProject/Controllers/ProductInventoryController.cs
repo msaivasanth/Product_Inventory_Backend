@@ -320,5 +320,16 @@ namespace SampleProject.Controllers
             });
             return Ok(searchResult);
         }
+
+        [HttpGet("products/categories")]
+        public ActionResult Categories ()
+        {
+            var categories = _db.categoryDtos.FromSqlRaw("spGetCategories");
+            List<String> categoriesList = new List<String>();
+            foreach (var category in categories) {
+                categoriesList.Add(category.Category_Name);
+            }
+            return Ok(categoriesList);
+        }
     }
 }
