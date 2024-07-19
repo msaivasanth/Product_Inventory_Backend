@@ -3,6 +3,9 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
 using SampleProject.Data;
+using SampleProject.Hubs;
+using SampleProject.Models.Chats;
+using SampleProject.Services;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -35,14 +38,25 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 builder.Services.AddControllers();
+
+builder.Services.AddMemoryCache();
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+
+builder.Services.AddSingleton<ChatDbService>();
+
+builder.Services.AddSignalR();
 
 builder.Services.AddCors(p => p.AddPolicy("corspolicy", build =>
 {
-    build.WithOrigins("*").AllowAnyMethod().AllowAnyHeader();
+    build.AllowAnyMethod().AllowAnyHeader()
+    .SetIsOriginAllowed(origin => true) // allow any origin
+   .AllowCredentials(); // allow credentials;
 }));
+
+builder.Services.AddSingleton<IDictionary<string, UserConnection>>(opts => new Dictionary<string, UserConnection>());
+
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
@@ -53,7 +67,6 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseCors("corspolicy");
 
 app.UseAuthentication();
 
@@ -61,6 +74,10 @@ app.UseHttpsRedirection();
 
 app.UseAuthorization();
 
+app.UseCors("corspolicy");
+
 app.MapControllers();
+
+app.MapHub<ChatHub>("chatRoom");
 
 app.Run();
