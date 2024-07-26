@@ -1,6 +1,8 @@
 ﻿using SampleProject.Models.Chats;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.SignalR;
+using static Microsoft.EntityFrameworkCore.DbLoggerCategory.Database;
+using SampleProject.Models.ProductInventory;
 
 namespace SampleProject.Hubs
 {
@@ -13,22 +15,21 @@ namespace SampleProject.Hubs
             _connections = connections;
         }
 
-        public async Task SendMessage(string message)
+        public async Task SendMessage(UserConnection connection, Object message)
         {
-            if (_connections.TryGetValue(Context.ConnectionId, out UserConnection connection))
-            {
-                await Clients.Group(connection.Room).SendAsync("ReceiveMessage", message);
-            }
+            await Clients.Group(connection.Room).SendAsync("NewReceiveMessage", new { user = connection.User, room = connection.Room, message });
         }
         public async Task JoinRoom(UserConnection connection)
         {
-            await Groups.AddToGroupAsync(Context.ConnectionId, connection.Room);
+            if (_connections.TryGetValue(Context.ConnectionId, out UserConnection user) == false)
+            {
+                await Groups.AddToGroupAsync(Context.ConnectionId, connection.Room);
 
-            _connections[Context.ConnectionId] = connection;
+                _connections[Context.ConnectionId] = connection;
 
-            await Clients.Group(connection.Room).SendAsync("ReceiveMessage", $"{connection.User} has joined {connection.Room}");
+                await Clients.Group(connection.Room).SendAsync("ReceiveMessage", $"{connection.User} has joined {connection.Room}");
+            }
         }
-
         public override Task OnDisconnectedAsync(Exception exception)
         {
             if (_connections.TryGetValue(Context.ConnectionId, out UserConnection userConnection))

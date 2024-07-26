@@ -38,7 +38,7 @@ namespace SampleProject.Services
 
         public async Task<List<Users>> FilterUsers(string name)
         {
-            return await Users.Find(x => x.Name.Contains(name)).ToListAsync();
+            return await Users.Find(x => x.Name.ToLower().Contains(name.ToLower())).ToListAsync();
         }
 
         public async Task<Users> GetSingleUser(string id)
@@ -118,17 +118,17 @@ namespace SampleProject.Services
 
                 var user2 = await GetSingleUser(chat.Users[1]);
 
-                if (user1.Id != id)
+                if (chat.Users[0] != id)
                 {
                     lis.Add(chat.Id);
                     lis.Add(user1.Name);
-                    lis.Add(user2.Name);
+                    lis.Add(chat.Users[0]);
                 }
                 else
                 {
                     lis.Add(chat.Id);
                     lis.Add(user2.Name);
-                    lis.Add(user1.Name);
+                    lis.Add(chat.Users[1]);
                 }
 
                 result.Add(lis);
