@@ -4,11 +4,15 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using MimeKit.Text;
+using MimeKit;
 using SampleProject.Data;
 using SampleProject.Models.DTO;
 using SampleProject.Models.ProductInventory;
 using System.IdentityModel.Tokens.Jwt;
 using System.Text;
+using MailKit.Net.Smtp;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace SampleProject.Controllers
 {
@@ -18,11 +22,23 @@ namespace SampleProject.Controllers
     {
         private readonly ProductInventoryContext _db;
         private IConfiguration _config;
+        private const string otp = "OtpKey";
+        private readonly IMemoryCache _cache;
 
 
-        public ProductInventoryController(IConfiguration configuration, ProductInventoryContext db) { 
+        public ProductInventoryController(IConfiguration configuration, ProductInventoryContext db, IMemoryCache cache) { 
             _db = db;
             _config = configuration;
+            _cache = cache;
+        }
+        public class Validate
+        {
+            public string otp { get; set; }
+        }
+
+        public class SendEmailDto
+        {
+            public string to { get; set; }
         }
 
         private User Authentication(Login login)
@@ -30,10 +46,12 @@ namespace SampleProject.Controllers
             User _user = null;
             if (login.UserName != null && login.Password != null)
             {
-                var u = _db.Logins.FirstOrDefault(x => x.Password == login.Password);
+                var u = _db.Logins.FirstOrDefault(x => x.UserName == login.UserName);
                 if (u != null) {
-                    if (u.UserName == login.UserName) {
-                        _user = _db.Users.FirstOrDefault(us => us.Id == u.Id);
+                    var isValidPassword = BCrypt.Net.BCrypt.Verify(login.Password, u.Password);
+                    if (isValidPassword)
+                    {
+                        _user = _db.Users.FirstOrDefault(us => us.Name == login.UserName);
                     }
                 }
             }
@@ -43,7 +61,6 @@ namespace SampleProject.Controllers
 
         private string GenerateToken()
         {
-            Console.WriteLine(_config["Jwt:Audience"]);
             var securityKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["Jwt:Key"]!));
             var credentials = new SigningCredentials(securityKey, SecurityAlgorithms.HmacSha256Signature);
 
@@ -55,6 +72,94 @@ namespace SampleProject.Controllers
 
             return new JwtSecurityTokenHandler().WriteToken(token);
 
+        }
+
+        [HttpPost("user/sendMail")]
+        public IActionResult SendEmail([FromBody] SendEmailDto sender)
+        {
+            Random generator = new Random();
+            string code = generator.Next(0, 1000000).ToString("D6");
+
+            var email = new MimeMessage();
+            email.From.Add(new MailboxAddress("Sai Vasanth", "20bd1a0556csec@gmail.com"));
+            email.To.Add(MailboxAddress.Parse(sender.to));
+
+            email.Subject = "OTP From XYZ";
+            email.Body = new TextPart(TextFormat.Html) { Text = $"<p>Your otp for registration <strong>{code}</strong></p>" };
+
+            using var smtp = new SmtpClient();
+            smtp.Connect("smtp.gmail.com", 465, useSsl: true);
+            smtp.Authenticate("20bd1a0556csec@gmail.com", _config.GetSection("Password").Value);
+            smtp.Send(email);
+            smtp.Disconnect(true);
+
+            _cache.Set(otp, code.ToString(), TimeSpan.FromMinutes(5)); // Set OTP in cache for 5 minutes
+            return Ok(new {result="Sent Mail!"});
+        }
+
+
+        [HttpPost("user/verify")]
+        public IActionResult ValidateOtp([FromBody] Validate values)
+        {
+
+            if (_cache.TryGetValue(otp, out string cachedOtp) && cachedOtp == values.otp)
+            {
+                return Ok(new {result="OTP is valid" });
+            }
+            return Ok(new { result="Invalid OTP" });
+        }
+        
+
+        [HttpPost("user/signup")]
+        public async Task<IActionResult> Signup([FromBody]SignupDto user)
+        {
+            if(user == null) { return Ok("In-sufficient details!");  }
+
+            var profileImage = "https://doonofficersacademy.com/wp-content/uploads/2022/10/sample-profile.png";
+
+            var User = _db.Users.FirstOrDefault(u => u.Email == user.Email);
+            if (User != null) { return Ok("User exists"); }
+
+
+            var hashedPassword = BCrypt.Net.BCrypt.HashPassword(user.Password);
+
+            // Adding user detials into database, in users table.
+            await _db.Database.ExecuteSqlRawAsync(
+                "EXEC spAddUser @UserName, @Gender, @Email, @ProfileImage",
+                new SqlParameter("@UserName", user.Name),
+                new SqlParameter("@Gender", user.Gender),
+                new SqlParameter("@Email", user.Email),
+                new SqlParameter("@ProfileImage", profileImage)
+            );
+
+
+            var fetchId = await _db.ProductIds.FromSqlRaw("SELECT IDENT_CURRENT('Users') AS ID").ToListAsync();
+            var ID = fetchId[0].ID;
+
+            // Adding login details of a user in database, in login table.
+            await _db.Database.ExecuteSqlRawAsync(
+                "EXEC spAddLogin @Id, @UserName, @Password",
+                new SqlParameter("@Id", ID),
+                new SqlParameter("@UserName", user.Name),
+                new SqlParameter("@Password", hashedPassword)
+            );
+
+            return Ok(new { result = "User Added :)" });
+        }
+
+        [AllowAnonymous]
+        [HttpPost("user/login")]
+        public IActionResult UserLogin([FromBody] Login login)
+        {
+            IActionResult res = Unauthorized();
+            var user_ = Authentication(login);
+            if (user_ != null)
+            {
+                var token = GenerateToken();
+                res = Ok(new {user = user_, token = token });
+            }
+
+            return res;
         }
 
         [HttpGet("user/me")]
@@ -105,20 +210,6 @@ namespace SampleProject.Controllers
             return Unauthorized(new { message = "Token is invalid" });
         }
 
-        [AllowAnonymous]
-        [HttpPost("user/login")]
-        public IActionResult UserLogin([FromBody] Login login)
-        {
-            IActionResult res = Unauthorized();
-            var user_ = Authentication(login);
-            if (user_ != null)
-            {
-                var token = GenerateToken();
-                res = Ok(new {name = user_.Name, token = token });
-            }
-
-            return res;
-        }
 
         [HttpGet("products")]
         public async Task<List<ProductInfo>> GetProducts()
@@ -130,7 +221,6 @@ namespace SampleProject.Controllers
             for(int i =  0; i < products.Count; i++)
             {
                 int id = products[i].Id;
-                Console.WriteLine(id);
                 string[] images = _db.Images.Where(i => i.Id == id).Select(i => i.ImageUrl).ToArray();
                 var pro = new ProductInfo()
                 {
@@ -325,7 +415,7 @@ namespace SampleProject.Controllers
         public ActionResult Categories ()
         {
             var categories = _db.categoryDtos.FromSqlRaw("spGetCategories");
-            List<String> categoriesList = new List<String>();
+            List<string> categoriesList = new List<string>();
             foreach (var category in categories) {
                 categoriesList.Add(category.Category_Name);
             }
